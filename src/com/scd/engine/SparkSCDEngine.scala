@@ -79,6 +79,8 @@ object SparkSCDEngine {
 			val tgt=sqlContext.sql(s"select * from $tgtDatabase.$tgtTable");
 			val srcDataTypes = src.dtypes;
 			val tgtDataTypes = tgt.drop("md5Value").drop("batchId").drop("currInd").drop("startDate").drop("endDate").drop("updateDate").dtypes;
+			
+			/////////// Datatype Conversion UDFs ///////////////////
 			val toInt    = udf[Int, String]( _.toInt);
 			val toDouble = udf[Double, String]( _.toDouble);
 			val conToString = udf[String, Any]( _.toString);
@@ -88,20 +90,23 @@ object SparkSCDEngine {
 				Try(new Date(format.parse(out.toString()).getTime))match {
 				case Success(t) => Some(t)
 				case Failure(_) => None
-				}}}
+				}}};
 			val toTimeStamp = udf{(out:String, form: String) => {
 				val format = new SimpleDateFormat(s"$form");
 				Try(new Timestamp(format.parse(out.toString()).getTime))match {
 				case Success(t) => Some(t)
 				case Failure(_) => None
-				}}}
-			val featureSRC = src.select();
+				}}};
+			val toByte = udf{(in: String) => (in.toByte)};
+			///////////////////////////////////
+			
+			
 			if(srcDataTypes.deep  != tgtDataTypes.deep)
 			{
 				for ( x <- 0 to (tgtDataTypes.length - 1) ) {
 					if (srcDataTypes(x) != tgtDataTypes(x))
 					{
-						val cols = tgtDataTypes(x).toString().split(",").map(_.trim);
+						val cols = tgtDataTypes(2).toString().split(",").map(_.trim);
 						val columnName = cols(0).replaceAll("[()]","");
 						val dataType = cols(1).toString.split("\\(")(0).replaceAll("[)]","");
 						dataType match {
@@ -129,7 +134,7 @@ object SparkSCDEngine {
 				var tgtFinal = tgt.except(newTgt1.select("a.*"));
 				tgtFinal = tgtFinal.unionAll(src);
 				tgtFinal.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.$tgtTable");
-			}
+			};
 			case "Type2" => {
 				// SCD Type 2 
 				val md5DF = src.map(r => (r.getAs(s"${tblPrimaryKey}").toString, r.hashCode.toString)).toDF(s"${tblPrimaryKey}",s"$md5Value");
@@ -151,10 +156,26 @@ object SparkSCDEngine {
 				// tgtFinal.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.tgt_table2");
 				tgtFinal.registerTempTable(s"$tgtTable"+"_tmp")
 				sqlContext.sql(s"insert overwrite table $tgtTable select * from $tgtTable" + "_tmp");
-			}
+			};
+						case "Type3" => {
+				// SCD Type 3 
+				println("Not Implemented");
+			};
+						case "Type4" => {
+				// SCD Type 4
+				println("Not Implemented");
+			};
+						case "Type5" => {
+				// SCD Type 5 
+				println("Not Implemented");
+			};
+						case "Type6" => {
+				// SCD Type 6
+				println("Not Implemented");
+			};
 			// catch the default with a variable so you can print it
 			case whoa  => println("Unexpected case: " + whoa.toString);
-			}
+			};
 		}
 		System.exit(0)
 	}
