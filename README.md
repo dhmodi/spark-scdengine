@@ -1,6 +1,7 @@
 # spark-scdengine
 
 This application is plug-n-play application developed on Spark 1.6.0 using DataFrame feature.
+
 It is easily configurable and converts few datatypes automatically.
 
 
@@ -16,6 +17,7 @@ $SPARK_HOME/bin/spark-submit --class com.scd.engine.SparkSCDEngine --master <mas
 
 e.g. 
 Source_DB   Source_Table  Target_DB Target_Table Primary_Key SCD_Type Incoming_Data Format
+
 default src_Table default tgt_Table col1  Type2 Incremental col3="yyyy-MM-dd' 'HH:mm:ss"|col5="dd-MMM-yy"
 
 
