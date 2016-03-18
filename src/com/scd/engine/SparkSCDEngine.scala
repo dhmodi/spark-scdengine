@@ -106,7 +106,7 @@ object SparkSCDEngine {
 				for ( x <- 0 to (tgtDataTypes.length - 1) ) {
 					if (srcDataTypes(x) != tgtDataTypes(x))
 					{
-						val cols = tgtDataTypes(2).toString().split(",").map(_.trim);
+						val cols = tgtDataTypes(x).toString().split(",").map(_.trim);
 						val columnName = cols(0).replaceAll("[()]","");
 						val dataType = cols(1).toString.split("\\(")(0).replaceAll("[)]","");
 						dataType match {
