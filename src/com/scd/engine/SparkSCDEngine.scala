@@ -18,6 +18,7 @@ import org.apache.spark.sql.types._
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.sql.Date
+//import java.sql.Date
 import scala.util.{Try, Success, Failure}
 
 
@@ -36,7 +37,7 @@ object SparkSCDEngine {
 		//System.setProperty("hadoop.home.dir", "C:/Users/dhmodi/Downloads/hadoop-common-2.2.0-bin-master/hadoop-common-2.2.0-bin-master")
 		val conf = new SparkConf().setAppName("SparkSCDEngine").setMaster(args(0));
 		val sc = new SparkContext(conf);
-		val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc);
+		val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc);  
 		import sqlContext.implicits._
 		val bufferedSource = scala.io.Source.fromFile(args(1));
 		var srcDatabase = ""; 
@@ -44,6 +45,8 @@ object SparkSCDEngine {
 		var tgtDatabase = "";
 		var tgtTable = "";
 		var tblPrimaryKey:Array[String] = null;
+		var tblcolmns:Array[String] = null;
+		var tblcolumnsSelect = "ALL";
 		var scdType = "";
 		var loadType = "";
 		var mapDataFormat:Map[String,String] = Map();
@@ -57,9 +60,11 @@ object SparkSCDEngine {
 				case 3 => tgtTable = cols(3);
 				case 4 => { tblPrimaryKey = cols(4).trim.replaceAll("[\"]", "").split('|');
 				};
-				case 5 => scdType = cols(5);
-				case 6 => loadType = cols(6);
-				case 7 => { val userDataTypes = cols(7).trim.replaceAll("[\"]", "").split('|');
+				case 5 => { tblcolmns = cols(5).trim.replaceAll("[\"]", "").split('|');
+				};
+				case 6 => scdType = cols(6);
+				case 7 => loadType = cols(7);
+				case 8 => { val userDataTypes = cols(8).trim.replaceAll("[\"]", "").split('|');
 				for (j <- (0 to userDataTypes.length - 1)) {
 					val param = userDataTypes(j).split("=");
 					mapDataFormat += ( param(0) -> param(1));
@@ -67,10 +72,24 @@ object SparkSCDEngine {
 				};
 				}
 			}
-			val seqCompositeKey = tblPrimaryKey.toList
-//					println(tgtTable);
-//			println(srcTable);
-//			println(tblPrimaryKey.toList);
+			val seqCompositeKey = tblPrimaryKey.toList;
+			val sKey = seqCompositeKey.mkString(",");
+
+			if (tblcolmns.length > 1 && !(tblcolmns(0).equalsIgnoreCase("ALL")))
+			{
+				val seqColumns = tblcolmns.toList;
+				tblcolumnsSelect = "select";
+			}
+			else 
+			{
+				tblcolumnsSelect = "ALL"
+			}
+			println(tgtTable);
+			println(srcTable);
+			println(tblPrimaryKey.toList);
+			println(scdType);
+			println(srcTable);
+			println(tblPrimaryKey.toList);
 			val md5Value = sc.getConf.get("spark.scdengine.md5ValueColumn");
 			val batchId = sc.getConf.get("spark.scdengine.batchIdColumn");
 			val currInd = sc.getConf.get("spark.scdengine.currentIndicatorColumn");
@@ -102,8 +121,6 @@ object SparkSCDEngine {
 					val toByte = udf{(in: String) => (in.toByte)};
 					val explodeColumns = udf{(A: String, count:Int) => {A.split(",")(count).trim}};
 					///////////////////////////////////
-
-
 					if(srcDataTypes.deep  != tgtDataTypes.deep)
 					{
 						for ( x <- 0 to (tgtDataTypes.length - 1) ) {
@@ -124,60 +141,106 @@ object SparkSCDEngine {
 									var typeFormat = "yyyy-MM-dd' 'HH:mm:ss";
 									if ( mapDataFormat.contains(s"$columnName")){ typeFormat = mapDataFormat(s"$columnName");}
 									src = src.withColumn(s"$columnName", toTimeStamp(src(s"$columnName"), lit(s"$typeFormat"))) };
-								case whoa  => println("Unexpected case: " + whoa.toString);
+								case whoa  => println("Unexpected DataType case: " + whoa.toString);
 								}
 							}
 						}
 					}
 
-					//			var condition = "";
-					//				for ( x <- 0 to (tblPrimaryKey.length - 1) )
-					//				  {
-					//				  if(x != 0){
-					//				    condition = condition + " and ";
-					//				  }
-					//				  condition = condition + "tgt.col(s\"$tblPrimaryKey(" + x + ")\") === src.col(s\"$tblPrimaryKey(" + x + ")\")";
-					//				  }
-
 					scdType match {
 					case "Type1" => {
 						println("SCD Type1: Unimplemented");
-						//var newTgt1;
-
 						val newTgt1 = tgt.as('a).join(src.as('b),seqCompositeKey);
 						var tgtFinal = tgt.except(newTgt1.select("a.*"));
 						tgtFinal = tgtFinal.unionAll(src);
-						tgtFinal.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.$tgtTable");
-					};
-					case "Type2" => {
-						// SCD Type 2 
-						//val md5DF = src.map(r => (r.getValuesMap(seqCompositeKey).toString, r.hashCode.toString)).toDF(seqCompositeKey.toString(),s"$md5Value");
-						//	md5DF.show();
-						var md5DF = src.map(r => {val temp = r.getValuesMap(seqCompositeKey) : Map[String,Any]; (temp.values.toList.mkString(","), r.hashCode.toString)}).toDF("mulColumn", "md5Value");
-						for ( x <- 0 to (tblPrimaryKey.length - 1) )
-						{
-							var colName = tblPrimaryKey(x);
-						//	println(colName);
-							md5DF = md5DF.withColumn(s"$colName", explodeColumns(md5DF(s"mulColumn"),lit(x)))
-						};
-						md5DF = md5DF.drop(md5DF(s"mulColumn"));
-						val newSrc = src.join(md5DF,seqCompositeKey);
-						// newSrc.show();
-						var tgtFinal=tgt.filter(s"$currInd" + " = 'N'"); //Add to final table
-						// tgtFinal.show()
-						val tgtActive=tgt.filter(s"$currInd" + " = 'Y'");
-						// Check for duplicate in SRC & TGT
-						val devSrc = newSrc.except(tgtActive.as('a).join(newSrc.as('b),tgtActive.col(s"$md5Value") === newSrc.col(s"$md5Value")).select("b.*").dropDuplicates());
-						// devSrc.show()
-						val newTgt2 = tgtActive.as('a).join(devSrc.as('b),seqCompositeKey);
-						//newTgt2.show()
-						tgtFinal = tgtFinal.unionAll(tgtActive.except(newTgt2.select("a.*")));
-						tgtFinal = tgtFinal.unionAll(newTgt2.select("a.*").withColumn(s"$currInd", lit("N")).withColumn(s"$endDate", current_timestamp()).withColumn(s"$updateDate", current_timestamp()));
-						val srcInsert = devSrc.withColumn(s"$batchId", lit("13")).withColumn(s"$currInd", lit("Y")).withColumn(s"$startDate", current_timestamp()).withColumn(s"$endDate", date_format(lit("9999-12-31 23:59:59"),"yyyy-MM-dd HH:mm:ss")).withColumn(s"$updateDate", current_timestamp());
-						tgtFinal = tgtFinal.unionAll(srcInsert);
-						// tgtFinal.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.tgt_table2");
 						tgtFinal.registerTempTable(s"$tgtTable"+"_tmp")
 						sqlContext.sql(s"insert overwrite table $tgtTable select * from $tgtTable" + "_tmp");
+					};
+					case "Type2" => {
+						tblcolumnsSelect match {
+						case "ALL" => {
+							// SCD Type 2 
+							//val md5DF = src.map(r => (r.getValuesMap(seqCompositeKey).toString, r.hashCode.toString)).toDF(seqCompositeKey.toString(),s"$md5Value");
+							//	md5DF.show();
+							var md5DF = src.map(r => {val temp = r.getValuesMap(seqCompositeKey) : Map[String,Any]; (temp.values.toList.mkString(","), r.hashCode.toString)}).toDF("mulColumn", "md5Value");
+							for ( x <- 0 to (tblPrimaryKey.length - 1) )
+							{
+								var colName = tblPrimaryKey(x);
+								//	println(colName);
+								md5DF = md5DF.withColumn(s"$colName", explodeColumns(md5DF(s"mulColumn"),lit(x)))
+							};
+							md5DF = md5DF.drop(md5DF(s"mulColumn"));
+							val newSrc = src.join(md5DF,seqCompositeKey);
+							// newSrc.show();
+							var tgtFinal=tgt.filter(s"$currInd" + " = 'N'"); //Add to final table
+							// tgtFinal.show()
+							val tgtActive=tgt.filter(s"$currInd" + " = 'Y'");
+							// Check for duplicate in SRC & TGT
+							val devSrc = newSrc.except(tgtActive.as('a).join(newSrc.as('b),tgtActive.col(s"$md5Value") === newSrc.col(s"$md5Value")).select("b.*").dropDuplicates());
+							// devSrc.show()
+							val newTgt2 = tgtActive.as('a).join(devSrc.as('b),seqCompositeKey);
+							//newTgt2.show()
+							tgtFinal = tgtFinal.unionAll(tgtActive.except(newTgt2.select("a.*")));
+							tgtFinal = tgtFinal.unionAll(newTgt2.select("a.*").withColumn(s"$currInd", lit("N")).withColumn(s"$endDate", current_timestamp()).withColumn(s"$updateDate", current_timestamp()));
+							val srcInsert = devSrc.withColumn(s"$batchId", lit("13")).withColumn(s"$currInd", lit("Y")).withColumn(s"$startDate", current_timestamp()).withColumn(s"$endDate", date_format(lit("9999-12-31 23:59:59"),"yyyy-MM-dd HH:mm:ss")).withColumn(s"$updateDate", current_timestamp());
+							tgtFinal = tgtFinal.unionAll(srcInsert);
+							// tgtFinal.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.tgt_table2");
+							tgtFinal.registerTempTable(s"$tgtTable"+"_tmp")
+							sqlContext.sql(s"insert overwrite table $tgtTable select * from $tgtTable" + "_tmp");
+						};
+						case whoa  => println("Unexpected columnType case: " + whoa.toString);
+						};
+					};
+					case "TransactionWithType2" => {
+						tblcolumnsSelect match {
+						case "ALL" => {
+							// SCD Type 2 with transactions
+
+							val temp = src.mapPartitions(v1 => {
+								// your logic goes here... 
+								var newRow = List[Row]();
+								//val length = List.newArrayList(v1).size();
+								//println(length)
+								//val (v11, v12) = v1.duplicate
+								val currDate = new java.util.Date();
+								while (v1.hasNext) {
+									val rowValue = v1.next()
+											//val structType = rowValue.schema()
+											if (v1.hasNext){
+												newRow = Row.fromSeq(rowValue.toSeq :+ rowValue.hashCode.toString :+ "13" :+ "N" :+ new java.sql.Timestamp(currDate.getTime()) :+ new java.sql.Timestamp(currDate.getTime())) :: newRow
+											}
+											else{
+												newRow = Row.fromSeq(rowValue.toSeq :+ rowValue.hashCode.toString :+ "13" :+ "Y" :+ new java.sql.Timestamp(currDate.getTime()) :+ Timestamp.valueOf("9999-12-31 11:59:59")) :: newRow
+											}
+								}
+								newRow.iterator
+							})
+
+									var struct = src.schema
+									struct = struct.add("md5Value",StringType).add("batchId",StringType).add("currind", StringType).add("startDate",TimestampType).add("endDate",TimestampType)
+
+									val newSrc = sqlContext.createDataFrame(temp, struct)
+
+									// newSrc.show();
+									var tgtFinal=tgt.filter(s"$currInd" + " = 'N'"); //Add to final table
+							// tgtFinal.show()
+							val tgtActive=tgt.filter(s"$currInd" + " = 'Y'");
+
+							// Check for duplicate in SRC & TGT
+							val devSrc = newSrc.except(tgtActive.as('a).join(newSrc.as('b),tgtActive.col(s"$md5Value") === newSrc.col(s"$md5Value")).select("b.*").dropDuplicates());
+							// devSrc.show()
+							val newTgt2 = tgtActive.as('a).join(devSrc.as('b),seqCompositeKey);
+							//newTgt2.show()
+							tgtFinal = tgtFinal.unionAll(tgtActive.except(newTgt2.select("a.*")));
+							tgtFinal = tgtFinal.unionAll(newTgt2.select("a.*").withColumn(s"$currInd", lit("N")).withColumn(s"$endDate", current_timestamp()).withColumn(s"$updateDate", current_timestamp()));
+							val srcInsert = devSrc.withColumn(s"$batchId", lit("13")).withColumn(s"$updateDate", current_timestamp());
+							tgtFinal = tgtFinal.unionAll(srcInsert);
+							// tgtFinal.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.tgt_table2");
+							tgtFinal.registerTempTable(s"$tgtTable"+"_tmp")
+							sqlContext.sql(s"insert overwrite table $tgtTable select * from $tgtTable" + "_tmp");
+						};
+						case whoa  => println("Unexpected columnType case: " + whoa.toString);
+						};
 					};
 					case "Type3" => {
 						// SCD Type 3 
@@ -195,8 +258,16 @@ object SparkSCDEngine {
 						// SCD Type 6
 						println("Not Implemented");
 					};
+					case "Append" => {
+						// SCD Type 6
+						src.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.$tgtTable");
+					};
+					case "TruncateLoad" => {
+						// SCD Type 6
+						src.write.mode(SaveMode.Overwrite).saveAsTable(s"$tgtDatabase.$tgtTable");
+					};
 					// catch the default with a variable so you can print it
-					case whoa  => println("Unexpected case: " + whoa.toString);
+					case whoa  => println("Unexpected scdType case: " + whoa.toString);
 					};
 		}
 		System.exit(0)
